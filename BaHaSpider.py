@@ -1,3 +1,7 @@
+import sys, getopt
+import random
+import time
+
 import requests
 from bs4 import BeautifulSoup
 import datetime
@@ -93,7 +97,7 @@ def export_rank_list(file_name, list_score_rank, list_people_rank):
         f.write(
             "\n\t\t<nobr><table border=\"0\" cellspacing=\"0\" cellpadding=\"0\"><tbody><tr><td><a href=\"https://www.free-counter.jp/\"><img src=\"https://www.f-counter.net/ani1/48/1644728724/\" alt=\"カウンター\" border=\"0\" style=\"margin:0px; padding:0px; border:0px; vertical-align:bottom\"></a></td>")
         f.write(
-            "\n\t\t<td><a href=\"https://www.free-counter.jp/\"><img src=\"https://www.f-counter.net/ani2/48/1644728724/\" alt=\"カウンター\" border=\"0\" style=\"margin:0px; padding:0px; border:0px; vertical-align:bottom\"></a></td>");
+            "\n\t\t<td><a href=\"https://www.free-counter.jp/\"><img src=\"https://www.f-counter.net/ani2/48/1644728724/\" alt=\"カウンター\" border=\"0\" style=\"margin:0px; padding:0px; border:0px; vertical-align:bottom\"></a></td>")
         f.write("\n\t\t</tr></tbody></table></nobr>")
         f.write("\n\t</body>\n</html>")
         f.close()
@@ -103,22 +107,61 @@ def export_rank_list(file_name, list_score_rank, list_people_rank):
 # Global Declaration
 # ================================================================
 totalSN = 34000
+name = ''
+num = 0.0
+people = 0
+recrawl = False
 listSN = []
 listScoreRank = []
 listPeopleRank = []
 urlBase = "https://ani.gamer.com.tw/animeVideo.php?sn="
 oAniDB = CAniDB()
+delay_choices = [0.2, 0.5, 0.5, 1, 1, 1, 1.2, 1.2, 1.5, 1.5, 2, 3]  # 延遲的秒數
+
+
+def is_float(element: any) -> bool:
+    if element is None:
+        return False
+    try:
+        float(element)
+        return True
+    except ValueError:
+        return False
+
 
 # ================================================================
 #
 # ================================================================
+# Read arguments
+argv = sys.argv[1:]
+try:
+    opts, args = getopt.getopt(argv, "hr:", ["help", "recrawl="])
+except getopt.GetoptError:
+    print('BaHaSpider.py [options]')
+    sys.exit(2)
+for opt, arg in opts:
+    if opt in ("-h", "--help"):
+        print("BaHaSpider.py [options]\n")
+        print("General Options:")
+        print(" -h, --help                   Show help.")
+        print(" -r, --recrawl <numbers>      Re-crawl all data from ani.gamer.com.tw")
+        print("                              and specify the total quantity you want to crawl.")
+        sys.exit()
+    elif opt in ("-r", "--recrawl"):
+        recrawl = True
+        totalSN = int(arg)
+
+# Create DB
 oAniDB.create_table_animate_list()
 oAniDB.create_table_episode()
 
-maxSN = oAniDB.get_max_sn()
-
-if maxSN >= totalSN:
-    totalSN = maxSN + 300
+#
+if recrawl:
+    maxSN = 0
+else:
+    maxSN = oAniDB.get_max_sn()
+    if maxSN >= totalSN:
+        totalSN = maxSN + 300
 
 for i in range(max(1, (maxSN + 1)), totalSN):
     listSN.append(str(i))
@@ -126,67 +169,71 @@ for i in range(max(1, (maxSN + 1)), totalSN):
 # ================================================================
 # Crawl existing animate in DB
 # ================================================================
-listDBSN = oAniDB.query_animate_sn_list()
-i = 0
-lenSN = len(listDBSN)
+if not recrawl:
+    listDBSN = oAniDB.query_animate_sn_list()
+    i = 0
+    lenSN = len(listDBSN)
 
-while len(listDBSN) != 0:
-    row = listDBSN.pop(0)
-    sn = row[0]
-    url = urlBase + str(sn)
+    while len(listDBSN) != 0:
+        row = listDBSN.pop(0)
+        sn = row[0]
+        url = urlBase + str(sn)
 
-    # Get HTML
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36'}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, "html.parser")
+        # Get HTML
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36'}
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    # Get Data
-    divs = soup.select(".anime_name")
-    if len(divs) == 0:
-        continue
+        delay = random.choice(delay_choices)  # 隨機選取秒數
+        time.sleep(delay)
 
-    for div_name in divs:
-        name = div_name.select_one("h1").getText()
-        names = name.split(" [")
-        name = names[0]
-        for index, strName in enumerate(names):
-            if index == 0:
-                continue
-            if not strName[0].isnumeric():
-                if strName.find("特別篇]") > -1:
+        # Get Data
+        divs = soup.select(".anime_name")
+        if len(divs) == 0:
+            continue
+
+        for div_name in divs:
+            name = div_name.select_one("h1").getText()
+            names = name.split(" [")
+            name = names[0]
+            for index, strName in enumerate(names):
+                if index == 0:
                     continue
-                else:
-                    name += " [" + strName
+                if not strName[0].isnumeric():
+                    if strName.find("特別篇]") > -1:
+                        continue
+                    else:
+                        name += " [" + strName
 
-    divs = soup.select(".score-overall-number")
-    for div_num in divs:
-        num = div_num.getText()
+        divs = soup.select(".score-overall-number")
+        for div_num in divs:
+            num = div_num.getText()
 
-    divs = soup.select(".score-overall-people")
-    for div_people in divs:
-        people = div_people.getText().replace(',', '')
-        people = people.replace("人評價", "")
+        divs = soup.select(".score-overall-people")
+        for div_people in divs:
+            people = div_people.getText().replace(',', '')
+            people = people.replace("人評價", "")
 
-    # Update Data to DB
-    rowid = oAniDB.update_animate(name, str(sn), float(num), int(people))
+        # Update Data to DB
+        if (num.isnumeric() or is_float(num)) and people.isnumeric():
+            rowid = oAniDB.update_animate(name, str(sn), float(num), int(people))
 
-    # Update Animate Episode
-    divs = soup.select(".season")
-    for div in divs:
-        lis = div.select("li")
-        for li in lis:
-            ep = li.select_one("a").getText()
-            strSN = li.select_one("a").get("href")
-            strSN = strSN.split("?sn=")
-            oAniDB.update_episode(rowid, ep, strSN[1])
+            # Update Animate Episode
+            divs = soup.select(".season")
+            for div in divs:
+                lis = div.select("li")
+                for li in lis:
+                    ep = li.select_one("a").getText()
+                    strSN = li.select_one("a").get("href")
+                    strSN = strSN.split("?sn=")
+                    oAniDB.update_episode(rowid, ep, strSN[1])
 
-    oAniDB.commit()
+            oAniDB.commit()
 
-    # os.system('cls' if os.name=='nt' else 'clear')
-    i += 1
-    print("Process: %.2f%% ( sn: %d )" % (float(i)/float(lenSN)*100, sn))
-    print(name + " / " + str(num) + " / " + str(people) + "人")
+        # os.system('cls' if os.name=='nt' else 'clear')
+        i += 1
+        print("Process: %.2f%% ( sn: %d )" % (float(i)/float(lenSN)*100, sn))
+        print(name + " / " + str(num) + " / " + str(people) + "人")
 
 # ================================================================
 # Crawl new animate on web
@@ -200,6 +247,9 @@ while len(listSN) != 0:
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
 
+    delay = random.choice(delay_choices)  # 隨機選取秒數
+    time.sleep(delay)
+
     # Get Data
     divs = soup.select(".anime_name")
     if len(divs) == 0:
@@ -228,23 +278,24 @@ while len(listSN) != 0:
         people = people.replace("人評價", "")
 
     # Update Data to DB
-    rowid = oAniDB.update_animate(name, sn, float(num), int(people))
+    if (num.isnumeric() or is_float(num)) and people.isnumeric():
+        rowid = oAniDB.update_animate(name, sn, float(num), int(people))
 
-    # Remove Duplicated Animate
-    divs = soup.select(".season")
-    for div in divs:
-        lis = div.select("li")
-        for li in lis:
-            ep = li.select_one("a").getText()
-            strSN = li.select_one("a").get("href")
-            strSN = strSN.split("?sn=")
-            if int(strSN[1]) == 28423:
-                print("warn")
-            if strSN[1] in listSN:
-                listSN.remove(strSN[1])
-            oAniDB.update_episode(rowid, ep, strSN[1])
+        # Remove Duplicated Animate
+        divs = soup.select(".season")
+        for div in divs:
+            lis = div.select("li")
+            for li in lis:
+                ep = li.select_one("a").getText()
+                strSN = li.select_one("a").get("href")
+                strSN = strSN.split("?sn=")
+                if int(strSN[1]) == 28423:
+                    print("warn")
+                if strSN[1] in listSN:
+                    listSN.remove(strSN[1])
+                oAniDB.update_episode(rowid, ep, strSN[1])
 
-    oAniDB.commit()
+        oAniDB.commit()
 
     # os.system('cls' if os.name=='nt' else 'clear')
     print("Process: %.2f%% ( %s / %d )" % (float(sn)/float(totalSN)*100, sn, totalSN))
